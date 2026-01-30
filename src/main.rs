@@ -1,28 +1,33 @@
 #![allow(unused_imports)]
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
 
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    println!("Redis-lite listening on 6379");
 
-    let mut incomming = listener.incoming();
+    loop {
+        let (socket, _) = listener.accept().await.unwrap();
+        tokio::spawn(async move {
+            process_socket(socket).await;
+        });
+    }
+}
 
-    while let Some(stream) = incomming.next() {
-        match stream {
-            Ok(mut stream) => loop {
-                let mut buffer = [0; 512];
+async fn process_socket(mut socket: TcpStream) {
+    let mut buffer = [0; 512];
 
-                match stream.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(_) => stream.write_all(b"+PONG\r\n").unwrap(),
-                    Err(_) => break,
-                }
-            },
+    loop {
+        match socket.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(_) => socket.write_all(b"+PONG\r\n").await.unwrap(),
             Err(e) => {
-                println!("error: {}", e);
+                println!("failed to read from socket; err = {:?}", e);
+                return;
             }
         }
     }
