@@ -3,8 +3,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 mod commands;
+mod db;
 mod resp;
 use commands::Command;
+use db::Db;
 use resp::parse_resp;
 
 use crate::resp::RespValue;
@@ -15,15 +17,18 @@ async fn main() {
 
     println!("Redis-lite listening on 6379");
 
+    let db = Db::new();
+
     loop {
         let (socket, _) = listener.accept().await.unwrap();
+        let db = db.clone();
         tokio::spawn(async move {
-            process_socket(socket).await;
+            process_socket(socket, db).await;
         });
     }
 }
 
-async fn process_socket(mut socket: TcpStream) {
+async fn process_socket(mut socket: TcpStream, db: Db) {
     let mut buffer = Vec::with_capacity(1024);
     let mut temp_buffer = [0; 1024];
 
@@ -48,7 +53,7 @@ async fn process_socket(mut socket: TcpStream) {
                     let command_result = Command::from_resp(value);
 
                     let response = match command_result {
-                        Ok(cmd) => cmd.execute(),
+                        Ok(cmd) => cmd.execute(&db),
                         Err(err) => RespValue::SimpleError(err),
                     };
 
