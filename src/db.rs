@@ -1,10 +1,11 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 struct DbState {
-    kv: HashMap<String, String>,
+    kv: HashMap<String, (String, Option<Instant>)>,
 }
 
 #[derive(Clone)]
@@ -20,12 +21,20 @@ impl Db {
     }
 
     pub fn get(&self, key: &str) -> Option<String> {
-        let lock = self.state.lock().unwrap();
-        lock.kv.get(key).cloned()
+        let mut lock = self.state.lock().unwrap();
+
+        if let Some((_val, Some(expiry))) = lock.kv.get(key) {
+            if Instant::now() > *expiry {
+                lock.kv.remove(key);
+                return None;
+            }
+        }
+
+        lock.kv.get(key).map(|(val, _)| val.clone())
     }
 
-    pub fn set(&self, key: String, value: String) {
+    pub fn set(&self, key: String, value: String, expiry: Option<Instant>) {
         let mut lock = self.state.lock().unwrap();
-        lock.kv.insert(key, value);
+        lock.kv.insert(key, (value, expiry));
     }
 }

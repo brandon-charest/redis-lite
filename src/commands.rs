@@ -1,10 +1,12 @@
+use std::time::{Duration, Instant};
+
 use crate::{db::Db, resp::RespValue};
 
 #[derive(Debug)]
 pub enum Command {
     Ping,
     Echo(String),
-    Set(String, String),
+    Set(String, String, Option<Duration>),
     Get(String),
 }
 
@@ -37,8 +39,9 @@ impl Command {
         match self {
             Command::Ping => RespValue::SimpleString("PONG".to_string()),
             Command::Echo(msg) => RespValue::BulkString(msg.clone()),
-            Command::Set(key, value) => {
-                db.set(key.clone(), value.clone());
+            Command::Set(key, value, duration) => {
+                let expiry = duration.map(|d| Instant::now() + d);
+                db.set(key.clone(), value.clone(), expiry);
                 RespValue::SimpleString("OK".to_string())
             }
             Command::Get(key) => match db.get(key) {
@@ -64,7 +67,24 @@ fn parse_set(args: &[RespValue]) -> Result<Command, String> {
     let key = get_bulk_string_value(&args[1]);
     let value = get_bulk_string_value(&args[2]);
 
-    Ok(Command::Set(key?, value?))
+    let mut duration: Option<Duration> = None;
+
+    if args.len() > 3 {
+        match &args[3] {
+            RespValue::BulkString(s) if s.to_lowercase() == "px" => match args.get(4) {
+                Some(RespValue::BulkString(ms_str)) => {
+                    let ms = ms_str
+                        .parse::<u64>()
+                        .map_err(|_| "ERR value is not an integer")?;
+                    duration = Some(Duration::from_millis(ms));
+                }
+                _ => return Err("ERR syntax error".to_string()),
+            },
+            _ => return Err("ERR syntax error".to_string()),
+        }
+    }
+
+    Ok(Command::Set(key?, value?, duration))
 }
 
 fn parse_get(args: &[RespValue]) -> Result<Command, String> {
