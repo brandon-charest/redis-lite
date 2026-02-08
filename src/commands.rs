@@ -135,3 +135,92 @@ fn get_bulk_string_value(arg: &RespValue) -> Result<String, String> {
         _ => return Err("ERR value must be bulk string".to_string()),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+
+    // Helper to create a dummy RESP Array for commands
+    fn make_resp_command(args: Vec<&str>) -> RespValue {
+        let items = args
+            .into_iter()
+            .map(|s| RespValue::BulkString(s.to_string()))
+            .collect();
+        RespValue::Array(items)
+    }
+
+    #[test]
+    fn test_parse_ping() {
+        let input = make_resp_command(vec!["PING"]);
+        let cmd = Command::from_resp(input).unwrap();
+        // We can't compare Enums without PartialEq, so we match
+        match cmd {
+            Command::Ping => {}
+            _ => panic!("Expected Command::Ping"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_standard() {
+        let input = make_resp_command(vec!["SET", "mykey", "myval"]);
+        let cmd = Command::from_resp(input).unwrap();
+
+        match cmd {
+            Command::Set(k, v, None) => {
+                assert_eq!(k, "mykey");
+                assert_eq!(v, "myval");
+            }
+            _ => panic!("Expected Command::Set with no expiry"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_with_px() {
+        let input = make_resp_command(vec!["SET", "mykey", "myval", "PX", "100"]);
+        let cmd = Command::from_resp(input).unwrap();
+
+        match cmd {
+            Command::Set(k, v, Some(d)) => {
+                assert_eq!(k, "mykey");
+                assert_eq!(v, "myval");
+                assert_eq!(d.as_millis(), 100);
+            }
+            _ => panic!("Expected Command::Set with expiry"),
+        }
+    }
+
+    #[test]
+    fn test_execute_set_get() {
+        let db = Db::new();
+
+        // Execute SET
+        let set_cmd = Command::Set("key".to_string(), "val".to_string(), None);
+        let resp = set_cmd.execute(&db);
+        assert_eq!(resp, RespValue::SimpleString("OK".to_string()));
+
+        // Execute GET
+        let get_cmd = Command::Get("key".to_string());
+        let resp = get_cmd.execute(&db);
+        assert_eq!(resp, RespValue::BulkString("val".to_string()));
+    }
+
+    #[test]
+    fn test_execute_rpush_wrong_type() {
+        let db = Db::new();
+
+        // 1. Set a String
+        let set_cmd = Command::Set("mykey".to_string(), "hello".to_string(), None);
+        set_cmd.execute(&db);
+
+        // 2. Try to RPUSH to that String key
+        let rpush_cmd = Command::RPush("mykey".to_string(), "item".to_string());
+        let resp = rpush_cmd.execute(&db);
+
+        // 3. Expect WRONGTYPE error
+        match resp {
+            RespValue::SimpleError(msg) => assert!(msg.contains("WRONGTYPE")),
+            _ => panic!("Expected SimpleError for WRONGTYPE"),
+        }
+    }
+}

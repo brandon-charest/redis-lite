@@ -139,7 +139,6 @@ fn parse_array(cursor: &mut Cursor<&[u8]>) -> Result<RespValue, String> {
 #[cfg(test)]
 mod test {
     use super::*;
-
     #[test]
     fn test_parse_array_echo_hey() {
         // "*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n"
@@ -155,6 +154,51 @@ mod test {
             RespValue::BulkString("hey".to_string()),
         ]);
 
+        assert_eq!(result, expected);
+    }
+    #[test]
+    fn test_parse_simple_string() {
+        let input = b"+OK\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_resp(&mut cursor).unwrap();
+        assert_eq!(result, RespValue::SimpleString("OK".to_string()));
+    }
+
+    #[test]
+    fn test_parse_integer() {
+        let input = b":1000\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_resp(&mut cursor).unwrap();
+        assert_eq!(result, RespValue::Integer(1000));
+    }
+
+    #[test]
+    fn test_parse_bulk_string() {
+        let input = b"$5\r\nhello\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_resp(&mut cursor).unwrap();
+        assert_eq!(result, RespValue::BulkString("hello".to_string()));
+    }
+
+    #[test]
+    fn test_parse_null_bulk_string() {
+        let input = b"$-1\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_resp(&mut cursor).unwrap();
+        assert_eq!(result, RespValue::Null);
+    }
+
+    #[test]
+    fn test_parse_array_mixed() {
+        // Array of [Integer(1), SimpleString("OK")]
+        let input = b"*2\r\n:1\r\n+OK\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_resp(&mut cursor).unwrap();
+
+        let expected = RespValue::Array(vec![
+            RespValue::Integer(1),
+            RespValue::SimpleString("OK".to_string()),
+        ]);
         assert_eq!(result, expected);
     }
 }

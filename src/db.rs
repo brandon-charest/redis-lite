@@ -64,3 +64,61 @@ impl Db {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_set_and_get_string() {
+        let db = Db::new();
+        db.set("foo".to_string(), "bar".to_string(), None);
+
+        let result = db.get("foo");
+        match result {
+            Some(DataType::String(s)) => assert_eq!(s, "bar"),
+            _ => panic!("Expected String 'bar'"),
+        }
+    }
+
+    #[test]
+    fn test_expiry_logic() {
+        let db = Db::new();
+        let expiry = Instant::now() + Duration::from_millis(50);
+
+        // Set key with 50ms expiry
+        db.set("temp".to_string(), "val".to_string(), Some(expiry));
+
+        // Immediate fetch should exist
+        assert!(db.get("temp").is_some());
+
+        // Wait for expiration
+        thread::sleep(Duration::from_millis(60));
+
+        // Fetch should trigger lazy delete and return None
+        assert!(db.get("temp").is_none());
+    }
+
+    #[test]
+    fn test_rpush_list() {
+        let db = Db::new();
+
+        // Push 1st item (creates list)
+        let len1 = db.rpush("mylist".to_string(), "a".to_string());
+        assert_eq!(len1, 1);
+
+        // Push 2nd item (appends)
+        let len2 = db.rpush("mylist".to_string(), "b".to_string());
+        assert_eq!(len2, 2);
+
+        // Verify content (internal check)
+        match db.get("mylist") {
+            Some(DataType::List(vec)) => {
+                assert_eq!(vec, vec!["a".to_string(), "b".to_string()]);
+            }
+            _ => panic!("Expected List"),
+        }
+    }
+}
