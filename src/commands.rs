@@ -1,6 +1,12 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::btree_map::Keys,
+    time::{Duration, Instant},
+};
 
-use crate::{db::Db, resp::RespValue};
+use crate::{
+    db::{DataType, Db},
+    resp::RespValue,
+};
 
 #[derive(Debug)]
 pub enum Command {
@@ -8,6 +14,7 @@ pub enum Command {
     Echo(String),
     Set(String, String, Option<Duration>),
     Get(String),
+    RPush(String, String),
 }
 
 impl Command {
@@ -31,6 +38,7 @@ impl Command {
             "ECHO" => parse_echo(&args),
             "SET" => parse_set(&args),
             "GET" => parse_get(&args),
+            "RPUSH" => parse_rpush(&args),
             _ => Err(format!("Unknown command: {}", command_name)),
         }
     }
@@ -45,9 +53,23 @@ impl Command {
                 RespValue::SimpleString("OK".to_string())
             }
             Command::Get(key) => match db.get(key) {
-                Some(val) => RespValue::BulkString(val),
+                Some(DataType::String(s)) => RespValue::BulkString(s),
                 None => RespValue::Null,
+                _ => RespValue::SimpleError(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
             },
+            Command::RPush(key, value) => {
+                let curr_len = db.rpush(key.clone(), value.clone());
+                if curr_len == 0 {
+                    RespValue::SimpleError(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    )
+                } else {
+                    RespValue::Integer(curr_len as i64)
+                }
+            }
         }
     }
 }
@@ -95,6 +117,16 @@ fn parse_get(args: &[RespValue]) -> Result<Command, String> {
     let key = get_bulk_string_value(&args[1]);
 
     Ok(Command::Get(key?))
+}
+
+fn parse_rpush(args: &[RespValue]) -> Result<Command, String> {
+    if args.len() < 3 {
+        return Err("ERR wrong number of arguments for 'set' command".to_string());
+    }
+
+    let key = get_bulk_string_value(&args[1]);
+    let value = get_bulk_string_value(&args[2]);
+    Ok(Command::RPush(key?, value?))
 }
 
 fn get_bulk_string_value(arg: &RespValue) -> Result<String, String> {

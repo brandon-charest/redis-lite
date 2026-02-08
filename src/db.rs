@@ -1,11 +1,19 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Instant,
 };
 
 struct DbState {
-    kv: HashMap<String, (String, Option<Instant>)>,
+    kv: HashMap<String, (DataType, Option<Instant>)>,
+}
+
+#[derive(Clone, Debug)]
+pub enum DataType {
+    String(String),
+    List(Vec<String>),
+    Set(HashSet<String>),
+    Hash(HashMap<String, String>),
 }
 
 #[derive(Clone)]
@@ -20,7 +28,7 @@ impl Db {
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<String> {
+    pub fn get(&self, key: &str) -> Option<DataType> {
         let mut lock = self.state.lock().unwrap();
 
         if let Some((_val, Some(expiry))) = lock.kv.get(key) {
@@ -35,6 +43,24 @@ impl Db {
 
     pub fn set(&self, key: String, value: String, expiry: Option<Instant>) {
         let mut lock = self.state.lock().unwrap();
-        lock.kv.insert(key, (value, expiry));
+        let data = DataType::String(value);
+        lock.kv.insert(key, (data, expiry));
+    }
+
+    pub fn rpush(&self, key: String, value: String) -> usize {
+        let mut lock = self.state.lock().unwrap();
+
+        let entry = lock
+            .kv
+            .entry(key)
+            .or_insert((DataType::List(Vec::new()), None));
+
+        match &mut entry.0 {
+            DataType::List(list) => {
+                list.push(value);
+                list.len()
+            }
+            _ => 0,
+        }
     }
 }
