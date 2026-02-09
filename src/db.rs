@@ -72,16 +72,15 @@ impl Db {
 
         match &mut entry.0 {
             DataType::List(list) => {
-                // Run the specific logic (append or prepend)
                 op(list);
                 list.len()
             }
-            _ => 0, // WRONGTYPE handling
+            _ => 0,
         }
     }
 
     pub fn lrange(&self, key: String, start: i64, end: i64) -> Result<Vec<String>, ()> {
-        let mut lock = self.state.lock().unwrap();
+        let lock = self.state.lock().unwrap();
 
         match lock.kv.get(&key) {
             Some((DataType::List(list), _expiry)) => {
@@ -108,6 +107,23 @@ impl Db {
             }
             Some(_) => Err(()),
             None => Ok(Vec::new()),
+        }
+    }
+
+    pub fn llen(&self, key: String) -> Result<usize, ()> {
+        let mut lock = self.state.lock().unwrap();
+
+        if let Some((_, Some(expiry))) = lock.kv.get(&key) {
+            if std::time::Instant::now() > *expiry {
+                lock.kv.remove(&key);
+                return Ok(0);
+            }
+        }
+
+        match lock.kv.get(&key) {
+            Some((DataType::List(list), _)) => Ok(list.len()),
+            None => Ok(0),
+            Some(_) => Err(()),
         }
     }
 }

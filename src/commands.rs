@@ -14,6 +14,7 @@ pub enum Command {
     RPush(String, Vec<String>),
     LPush(String, Vec<String>),
     LRange(String, i64, i64),
+    LLen(String),
 }
 
 const WRONG_TYPE_ERR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
@@ -42,6 +43,7 @@ impl Command {
             "RPUSH" => parse_rpush(&args),
             "LPUSH" => parse_lpush(&args),
             "LRANGE" => parse_range(&args),
+            "LLEN" => parse_llen(&args),
             _ => Err(format!("Unknown command: {}", command_name)),
         }
     }
@@ -74,6 +76,12 @@ impl Command {
                     RespValue::Array(resp_items)
                 }
                 Err(_) => RespValue::SimpleError(WRONG_TYPE_ERR.to_string()),
+            },
+            Command::LLen(key) => match db.llen(key) {
+                Ok(len) => RespValue::Integer(len as i64),
+                Err(_) => RespValue::SimpleError(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
             },
         }
     }
@@ -179,6 +187,15 @@ fn get_bulk_string_value(arg: &RespValue) -> Result<String, String> {
         RespValue::BulkString(s) => s.clone(),
         _ => return Err("ERR value must be bulk string".to_string()),
     })
+}
+
+fn parse_llen(args: &[RespValue]) -> Result<Command, String> {
+    if args.len() != 2 {
+        return Err("ERR wrong number of arguments for 'llen' command".to_string());
+    }
+
+    let key = get_bulk_string_value(&args[1])?;
+    Ok(Command::LLen(key))
 }
 
 fn parse_int(arg: &RespValue) -> Result<i64, String> {
