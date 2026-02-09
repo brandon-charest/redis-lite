@@ -133,31 +133,29 @@ fn parse_get(args: &[RespValue]) -> Result<Command, String> {
 }
 
 fn parse_rpush(args: &[RespValue]) -> Result<Command, String> {
-    if args.len() < 3 {
-        return Err("ERR wrong number of arguments for 'set' command".to_string());
-    }
-
-    let key = get_bulk_string_value(&args[1])?;
-    let mut values = Vec::new();
-    for i in 2..args.len() {
-        let val = get_bulk_string_value(&args[i])?;
-        values.push(val);
-    }
+    let (key, values) = parse_push_command(args, "rpush")?;
     Ok(Command::RPush(key, values))
 }
 
 fn parse_lpush(args: &[RespValue]) -> Result<Command, String> {
+    let (key, values) = parse_push_command(args, "lpush")?;
+    Ok(Command::LPush(key, values))
+}
+
+fn parse_push_command(args: &[RespValue], cmd_name: &str) -> Result<(String, Vec<String>), String> {
     if args.len() < 3 {
-        return Err("ERR wrong number of arguments for 'set' command".to_string());
+        return Err(format!(
+            "ERR wrong number of arguments for '{}' command",
+            cmd_name
+        ));
     }
 
     let key = get_bulk_string_value(&args[1])?;
-    let mut values = Vec::new();
-    for i in 2..args.len() {
-        let val = get_bulk_string_value(&args[i])?;
-        values.push(val);
-    }
-    Ok(Command::LPush(key, values))
+
+    // Use iterator to collect all values from index 2 onwards
+    let values: Result<Vec<String>, String> = args[2..].iter().map(get_bulk_string_value).collect();
+
+    Ok((key, values?))
 }
 
 fn parse_range(args: &[RespValue]) -> Result<Command, String> {
