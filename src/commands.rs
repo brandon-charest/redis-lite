@@ -14,7 +14,8 @@ pub enum Command {
     Echo(String),
     Set(String, String, Option<Duration>),
     Get(String),
-    RPush(String, String),
+    RPush(String, Vec<String>),
+    LRange(u32, u32),
 }
 
 impl Command {
@@ -39,6 +40,7 @@ impl Command {
             "SET" => parse_set(&args),
             "GET" => parse_get(&args),
             "RPUSH" => parse_rpush(&args),
+            "LRANGE" => 
             _ => Err(format!("Unknown command: {}", command_name)),
         }
     }
@@ -124,9 +126,13 @@ fn parse_rpush(args: &[RespValue]) -> Result<Command, String> {
         return Err("ERR wrong number of arguments for 'set' command".to_string());
     }
 
-    let key = get_bulk_string_value(&args[1]);
-    let value = get_bulk_string_value(&args[2]);
-    Ok(Command::RPush(key?, value?))
+    let key = get_bulk_string_value(&args[1])?;
+    let mut values = Vec::new();
+    for i in 2..args.len() {
+        let val = get_bulk_string_value(&args[i])?;
+        values.push(val);
+    }
+    Ok(Command::RPush(key, values))
 }
 
 fn get_bulk_string_value(arg: &RespValue) -> Result<String, String> {
@@ -141,7 +147,6 @@ mod tests {
     use super::*;
     use crate::db::Db;
 
-    // Helper to create a dummy RESP Array for commands
     fn make_resp_command(args: Vec<&str>) -> RespValue {
         let items = args
             .into_iter()
@@ -154,7 +159,6 @@ mod tests {
     fn test_parse_ping() {
         let input = make_resp_command(vec!["PING"]);
         let cmd = Command::from_resp(input).unwrap();
-        // We can't compare Enums without PartialEq, so we match
         match cmd {
             Command::Ping => {}
             _ => panic!("Expected Command::Ping"),
@@ -193,13 +197,10 @@ mod tests {
     #[test]
     fn test_execute_set_get() {
         let db = Db::new();
-
-        // Execute SET
         let set_cmd = Command::Set("key".to_string(), "val".to_string(), None);
         let resp = set_cmd.execute(&db);
         assert_eq!(resp, RespValue::SimpleString("OK".to_string()));
 
-        // Execute GET
         let get_cmd = Command::Get("key".to_string());
         let resp = get_cmd.execute(&db);
         assert_eq!(resp, RespValue::BulkString("val".to_string()));
@@ -208,16 +209,12 @@ mod tests {
     #[test]
     fn test_execute_rpush_wrong_type() {
         let db = Db::new();
-
-        // 1. Set a String
         let set_cmd = Command::Set("mykey".to_string(), "hello".to_string(), None);
         set_cmd.execute(&db);
 
-        // 2. Try to RPUSH to that String key
-        let rpush_cmd = Command::RPush("mykey".to_string(), "item".to_string());
+        let rpush_cmd = Command::RPush("mykey".to_string(), vec!["hello".to_string()]);
         let resp = rpush_cmd.execute(&db);
 
-        // 3. Expect WRONGTYPE error
         match resp {
             RespValue::SimpleError(msg) => assert!(msg.contains("WRONGTYPE")),
             _ => panic!("Expected SimpleError for WRONGTYPE"),

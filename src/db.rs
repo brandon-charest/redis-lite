@@ -47,7 +47,7 @@ impl Db {
         lock.kv.insert(key, (data, expiry));
     }
 
-    pub fn rpush(&self, key: String, value: String) -> usize {
+    pub fn rpush(&self, key: String, values: Vec<String>) -> usize {
         let mut lock = self.state.lock().unwrap();
 
         let entry = lock
@@ -57,7 +57,7 @@ impl Db {
 
         match &mut entry.0 {
             DataType::List(list) => {
-                list.push(value);
+                list.extend(values);
                 list.len()
             }
             _ => 0,
@@ -88,16 +88,12 @@ mod tests {
         let db = Db::new();
         let expiry = Instant::now() + Duration::from_millis(50);
 
-        // Set key with 50ms expiry
         db.set("temp".to_string(), "val".to_string(), Some(expiry));
 
-        // Immediate fetch should exist
         assert!(db.get("temp").is_some());
 
-        // Wait for expiration
         thread::sleep(Duration::from_millis(60));
 
-        // Fetch should trigger lazy delete and return None
         assert!(db.get("temp").is_none());
     }
 
@@ -105,18 +101,15 @@ mod tests {
     fn test_rpush_list() {
         let db = Db::new();
 
-        // Push 1st item (creates list)
-        let len1 = db.rpush("mylist".to_string(), "a".to_string());
+        let len1 = db.rpush("mylist".to_string(), vec!["a".to_string()]);
         assert_eq!(len1, 1);
 
-        // Push 2nd item (appends)
-        let len2 = db.rpush("mylist".to_string(), "b".to_string());
-        assert_eq!(len2, 2);
+        let len2 = db.rpush("mylist".to_string(), vec!["b".to_string(), "c".to_string()]);
+        assert_eq!(len2, 3);
 
-        // Verify content (internal check)
         match db.get("mylist") {
             Some(DataType::List(vec)) => {
-                assert_eq!(vec, vec!["a".to_string(), "b".to_string()]);
+                assert_eq!(vec, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
             }
             _ => panic!("Expected List"),
         }
