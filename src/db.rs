@@ -48,6 +48,21 @@ impl Db {
     }
 
     pub fn rpush(&self, key: String, values: Vec<String>) -> usize {
+        self.modify_list(key, |list| {
+            list.extend(values);
+        })
+    }
+
+    pub fn lpush(&self, key: String, values: Vec<String>) -> usize {
+        self.modify_list(key, |list| {
+            list.splice(0..0, values.into_iter().rev());
+        })
+    }
+
+    fn modify_list<F>(&self, key: String, op: F) -> usize
+    where
+        F: FnOnce(&mut Vec<String>),
+    {
         let mut lock = self.state.lock().unwrap();
 
         let entry = lock
@@ -57,10 +72,11 @@ impl Db {
 
         match &mut entry.0 {
             DataType::List(list) => {
-                list.extend(values);
+                // Run the specific logic (append or prepend)
+                op(list);
                 list.len()
             }
-            _ => 0,
+            _ => 0, // WRONGTYPE handling
         }
     }
 

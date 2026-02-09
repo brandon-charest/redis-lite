@@ -1,7 +1,4 @@
-use std::{
-    collections::btree_map::Keys,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use crate::{
     db::{DataType, Db},
@@ -15,8 +12,11 @@ pub enum Command {
     Set(String, String, Option<Duration>),
     Get(String),
     RPush(String, Vec<String>),
+    LPush(String, Vec<String>),
     LRange(String, i64, i64),
 }
+
+const WRONG_TYPE_ERR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
 
 impl Command {
     pub fn from_resp(value: RespValue) -> Result<Command, String> {
@@ -40,46 +40,50 @@ impl Command {
             "SET" => parse_set(&args),
             "GET" => parse_get(&args),
             "RPUSH" => parse_rpush(&args),
+            "LPUSH" => parse_lpush(&args),
             "LRANGE" => parse_range(&args),
             _ => Err(format!("Unknown command: {}", command_name)),
         }
     }
 
-    pub fn execute(&self, db: &Db) -> RespValue {
+    pub fn execute(self, db: &Db) -> RespValue {
         match self {
             Command::Ping => RespValue::SimpleString("PONG".to_string()),
             Command::Echo(msg) => RespValue::BulkString(msg.clone()),
             Command::Set(key, value, duration) => {
                 let expiry = duration.map(|d| Instant::now() + d);
-                db.set(key.clone(), value.clone(), expiry);
+                db.set(key, value, expiry);
                 RespValue::SimpleString("OK".to_string())
             }
-            Command::Get(key) => match db.get(key) {
+            Command::Get(key) => match db.get(&key) {
                 Some(DataType::String(s)) => RespValue::BulkString(s),
                 None => RespValue::Null,
-                _ => RespValue::SimpleError(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
-                ),
+                _ => RespValue::SimpleError(WRONG_TYPE_ERR.to_string()),
             },
             Command::RPush(key, value) => {
-                let curr_len = db.rpush(key.clone(), value.clone());
-                if curr_len == 0 {
-                    RespValue::SimpleError(
-                        "WRONGTYPE Operation against a key holding the wrong kind of value"
-                            .to_string(),
-                    )
-                } else {
-                    RespValue::Integer(curr_len as i64)
-                }
+                let curr_len = db.rpush(key, value);
+                handle_push(curr_len)
             }
-            Command::LRange(key, start, end) => match db.lrange(key.clone(), *start, *end) {
+            Command::LPush(key, value) => {
+                let curr_len = db.lpush(key, value);
+                handle_push(curr_len)
+            }
+            Command::LRange(key, start, end) => match db.lrange(key, start, end) {
                 Ok(items) => {
                     let resp_items = items.into_iter().map(RespValue::BulkString).collect();
                     RespValue::Array(resp_items)
                 }
-                Err(_) => RespValue::SimpleError("WRONGTYPE".to_string()),
+                Err(_) => RespValue::SimpleError(WRONG_TYPE_ERR.to_string()),
             },
         }
+    }
+}
+
+fn handle_push(len: usize) -> RespValue {
+    if len == 0 {
+        RespValue::SimpleError(WRONG_TYPE_ERR.to_string())
+    } else {
+        RespValue::Integer(len as i64)
     }
 }
 
@@ -95,8 +99,8 @@ fn parse_set(args: &[RespValue]) -> Result<Command, String> {
         return Err("ERR wrong number of arguments for 'set' command".to_string());
     }
 
-    let key = get_bulk_string_value(&args[1]);
-    let value = get_bulk_string_value(&args[2]);
+    let key = get_bulk_string_value(&args[1])?;
+    let value = get_bulk_string_value(&args[2])?;
 
     let mut duration: Option<Duration> = None;
 
@@ -115,7 +119,7 @@ fn parse_set(args: &[RespValue]) -> Result<Command, String> {
         }
     }
 
-    Ok(Command::Set(key?, value?, duration))
+    Ok(Command::Set(key, value, duration))
 }
 
 fn parse_get(args: &[RespValue]) -> Result<Command, String> {
@@ -140,6 +144,20 @@ fn parse_rpush(args: &[RespValue]) -> Result<Command, String> {
         values.push(val);
     }
     Ok(Command::RPush(key, values))
+}
+
+fn parse_lpush(args: &[RespValue]) -> Result<Command, String> {
+    if args.len() < 3 {
+        return Err("ERR wrong number of arguments for 'set' command".to_string());
+    }
+
+    let key = get_bulk_string_value(&args[1])?;
+    let mut values = Vec::new();
+    for i in 2..args.len() {
+        let val = get_bulk_string_value(&args[i])?;
+        values.push(val);
+    }
+    Ok(Command::LPush(key, values))
 }
 
 fn parse_range(args: &[RespValue]) -> Result<Command, String> {
