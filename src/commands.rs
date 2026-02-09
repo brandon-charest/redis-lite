@@ -15,7 +15,7 @@ pub enum Command {
     Set(String, String, Option<Duration>),
     Get(String),
     RPush(String, Vec<String>),
-    LRange(u32, u32),
+    LRange(String, i64, i64),
 }
 
 impl Command {
@@ -40,7 +40,7 @@ impl Command {
             "SET" => parse_set(&args),
             "GET" => parse_get(&args),
             "RPUSH" => parse_rpush(&args),
-            "LRANGE" => 
+            "LRANGE" => parse_range(&args),
             _ => Err(format!("Unknown command: {}", command_name)),
         }
     }
@@ -72,6 +72,13 @@ impl Command {
                     RespValue::Integer(curr_len as i64)
                 }
             }
+            Command::LRange(key, start, end) => match db.lrange(key.clone(), *start, *end) {
+                Ok(items) => {
+                    let resp_items = items.into_iter().map(RespValue::BulkString).collect();
+                    RespValue::Array(resp_items)
+                }
+                Err(_) => RespValue::SimpleError("WRONGTYPE".to_string()),
+            },
         }
     }
 }
@@ -135,11 +142,36 @@ fn parse_rpush(args: &[RespValue]) -> Result<Command, String> {
     Ok(Command::RPush(key, values))
 }
 
+fn parse_range(args: &[RespValue]) -> Result<Command, String> {
+    // LRANGE key start stop
+    if args.len() != 4 {
+        return Err("ERR wrong number of arguments for 'lrange' command".to_string());
+    }
+    let key = match &args[1] {
+        RespValue::BulkString(s) => s.clone(),
+        _ => return Err("ERR key must be a bulk string".to_string()),
+    };
+
+    let start = parse_int(&args[2])?;
+    let end = parse_int(&args[3])?;
+
+    Ok(Command::LRange(key, start, end))
+}
+
 fn get_bulk_string_value(arg: &RespValue) -> Result<String, String> {
     Ok(match arg {
         RespValue::BulkString(s) => s.clone(),
         _ => return Err("ERR value must be bulk string".to_string()),
     })
+}
+
+fn parse_int(arg: &RespValue) -> Result<i64, String> {
+    match arg {
+        RespValue::BulkString(s) => s
+            .parse::<i64>()
+            .map_err(|_| "ERR value is not an integer".to_string()),
+        _ => Err("ERR value is not an integer".to_string()),
+    }
 }
 
 #[cfg(test)]

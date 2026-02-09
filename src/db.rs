@@ -63,6 +63,37 @@ impl Db {
             _ => 0,
         }
     }
+
+    pub fn lrange(&self, key: String, start: i64, end: i64) -> Result<Vec<String>, ()> {
+        let mut lock = self.state.lock().unwrap();
+
+        match lock.kv.get(&key) {
+            Some((DataType::List(list), _expiry)) => {
+                let len = list.len() as i64;
+                if len == 0 {
+                    return Ok(Vec::new());
+                }
+
+                let mut start_idx = if start < 0 { len + start } else { start };
+                let mut end_idx = if end < 0 { len + end } else { end };
+
+                if start_idx < 0 {
+                    start_idx = 0;
+                }
+                if end_idx >= len {
+                    end_idx = len - 1;
+                }
+
+                if start_idx >= end_idx || start_idx >= len {
+                    return Ok(Vec::new());
+                }
+                let result = list[start_idx as usize..=end_idx as usize].to_vec();
+                Ok(result)
+            }
+            Some(_) => Err(()),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 #[cfg(test)]
