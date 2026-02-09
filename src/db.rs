@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -11,7 +11,7 @@ struct DbState {
 #[derive(Clone, Debug)]
 pub enum DataType {
     String(String),
-    List(Vec<String>),
+    List(VecDeque<String>),
     Set(HashSet<String>),
     Hash(HashMap<String, String>),
 }
@@ -55,20 +55,22 @@ impl Db {
 
     pub fn lpush(&self, key: String, values: Vec<String>) -> usize {
         self.modify_list(key, |list| {
-            list.splice(0..0, values.into_iter().rev());
+            for value in values {
+                list.push_front(value);
+            }
         })
     }
 
     fn modify_list<F>(&self, key: String, op: F) -> usize
     where
-        F: FnOnce(&mut Vec<String>),
+        F: FnOnce(&mut VecDeque<String>),
     {
         let mut lock = self.state.lock().unwrap();
 
         let entry = lock
             .kv
             .entry(key)
-            .or_insert((DataType::List(Vec::new()), None));
+            .or_insert((DataType::List(VecDeque::new()), None));
 
         match &mut entry.0 {
             DataType::List(list) => {
@@ -102,7 +104,10 @@ impl Db {
                 if start_idx >= end_idx || start_idx >= len {
                     return Ok(Vec::new());
                 }
-                let result = list[start_idx as usize..=end_idx as usize].to_vec();
+                let result: Vec<String> = list
+                    .range(start_idx as usize..=end_idx as usize)
+                    .cloned()
+                    .collect();
                 Ok(result)
             }
             Some(_) => Err(()),
@@ -124,6 +129,31 @@ impl Db {
             Some((DataType::List(list), _)) => Ok(list.len()),
             None => Ok(0),
             Some(_) => Err(()),
+        }
+    }
+
+    pub fn lpop(&self, key: &str) -> Result<Option<String>, ()> {
+        let mut lock = self.state.lock().unwrap();
+
+        if let Some((_, Some(expiry))) = lock.kv.get(key) {
+            if std::time::Instant::now() > *expiry {
+                lock.kv.remove(key);
+                return Ok(None);
+            }
+        }
+
+        match lock.kv.get_mut(key) {
+            Some((DataType::List(list), _)) => {
+                let value = list.pop_front();
+
+                if list.is_empty() {
+                    lock.kv.remove(key);
+                }
+
+                Ok(value)
+            }
+            Some(_) => Err(()),
+            None => Ok(None),
         }
     }
 }
