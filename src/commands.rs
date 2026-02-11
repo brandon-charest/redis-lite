@@ -15,7 +15,7 @@ pub enum Command {
     LPush(String, Vec<String>),
     LRange(String, i64, i64),
     LLen(String),
-    LPop(String),
+    LPop(String, Option<usize>),
 }
 
 const WRONG_TYPE_ERR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
@@ -85,8 +85,15 @@ impl Command {
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
             },
-            Command::LPop(key) => match db.lpop(&key) {
-                Ok(Some(val)) => RespValue::BulkString(val),
+            Command::LPop(key, count) => match db.lpop(&key, count) {
+                Ok(Some(items)) => {
+                    if count.is_none() {
+                        RespValue::BulkString(items[0].clone())
+                    } else {
+                        let resp_items = items.into_iter().map(RespValue::BulkString).collect();
+                        RespValue::Array(resp_items)
+                    }
+                }
                 Ok(None) => RespValue::Null,
                 Err(_) => RespValue::SimpleError(
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
@@ -208,11 +215,23 @@ fn parse_llen(args: &[RespValue]) -> Result<Command, String> {
 }
 
 fn parse_lpop(args: &[RespValue]) -> Result<Command, String> {
-    if args.len() != 2 {
+    let num_args = args.len();
+
+    if num_args < 2 || num_args > 4 {
         return Err("ERR wrong number of arguments for 'lpop' command".to_string());
     }
     let key = get_bulk_string_value(&args[1])?;
-    Ok(Command::LPop(key))
+    let count = if num_args > 2 {
+        let n = parse_int(&args[2])?;
+        if n < 0 {
+            return Err("Must be positive value".to_string());
+        }
+        Some(n as usize)
+    } else {
+        None
+    };
+
+    Ok(Command::LPop(key, count))
 }
 
 fn parse_int(arg: &RespValue) -> Result<i64, String> {

@@ -132,7 +132,7 @@ impl Db {
         }
     }
 
-    pub fn lpop(&self, key: &str) -> Result<Option<String>, ()> {
+    pub fn lpop(&self, key: &str, count: Option<usize>) -> Result<Option<Vec<String>>, ()> {
         let mut lock = self.state.lock().unwrap();
 
         if let Some((_, Some(expiry))) = lock.kv.get(key) {
@@ -144,13 +144,19 @@ impl Db {
 
         match lock.kv.get_mut(key) {
             Some((DataType::List(list), _)) => {
-                let value = list.pop_front();
+                let needed = count.unwrap_or(1);
+                let actual = std::cmp::min(list.len(), needed);
 
+                if actual == 0 {
+                    return Ok(None);
+                }
+                
+                let items: Vec<String> = list.drain(0..actual).collect();
                 if list.is_empty() {
                     lock.kv.remove(key);
                 }
 
-                Ok(value)
+                Ok(Some(items))
             }
             Some(_) => Err(()),
             None => Ok(None),
