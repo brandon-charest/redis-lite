@@ -3,9 +3,11 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
+use tokio::sync::oneshot;
 
 struct DbState {
     kv: HashMap<String, (DataType, Option<Instant>)>,
+    waiting: HashMap<String, VecDeque<oneshot::Sender<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -150,7 +152,7 @@ impl Db {
                 if actual == 0 {
                     return Ok(None);
                 }
-                
+
                 let items: Vec<String> = list.drain(0..actual).collect();
                 if list.is_empty() {
                     lock.kv.remove(key);
