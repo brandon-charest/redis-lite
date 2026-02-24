@@ -25,7 +25,8 @@ const WRONG_TYPE_ERR: &str = "WRONGTYPE Operation against a key holding the wron
 impl Command {
     pub fn from_resp(value: RespValue) -> Result<Command, String> {
         let args = match value {
-            RespValue::Array(a) => a,
+            RespValue::Array(Some(a)) => a,
+            RespValue::Array(None) => return Err("Command cannot be a null array".to_string()),
             _ => return Err("Command must be an Array".to_string()),
         };
 
@@ -78,7 +79,7 @@ impl Command {
             Command::LRange(key, start, end) => match db.lrange(key, start, end) {
                 Ok(items) => {
                     let resp_items = items.into_iter().map(RespValue::BulkString).collect();
-                    RespValue::Array(resp_items)
+                    RespValue::Array(Some(resp_items))
                 }
                 Err(_) => RespValue::SimpleError(WRONG_TYPE_ERR.to_string()),
             },
@@ -89,40 +90,35 @@ impl Command {
                 ),
             },
             Command::BLPOP(key, timeout_secs) => {
-                // Try to register or get data
                 let rx = match db.blpop_register(key.clone()) {
                     Ok(Some(val)) => {
-                        // Immediate success! Return [key, value]
-                        return RespValue::Array(vec![
-                            RespValue::BulkString(key),
+                        return RespValue::Array(Some(vec![
+                            RespValue::BulkString(key.clone()),
                             RespValue::BulkString(val),
-                        ]);
+                        ]));
                     }
-                    Ok(None) => return RespValue::Null, // Should be unreachable
-                    Err(rx) => rx,                      // We are waiting on this receiver
+                    Ok(None) => return RespValue::Array(None),
+                    Err(receiver) => receiver,
                 };
 
-                // Helper to format success response
                 let success_response = |val: String| {
-                    RespValue::Array(vec![
+                    RespValue::Array(Some(vec![
                         RespValue::BulkString(key.clone()),
                         RespValue::BulkString(val),
-                    ])
+                    ]))
                 };
 
                 if timeout_secs == 0.0 {
-                    // Infinite Timeout: Wait forever until we get a message
                     match rx.await {
                         Ok(val) => success_response(val),
-                        Err(_) => RespValue::Null, // Sender dropped (connection closed)
+                        Err(_) => RespValue::Array(None),
                     }
                 } else {
-                    // Finite Timeout: Wait for Duration
                     let duration = Duration::from_secs_f64(timeout_secs);
                     match timeout(duration, rx).await {
-                        Ok(Ok(val)) => success_response(val), // Success within time
-                        Ok(Err(_)) => RespValue::Null,        // Sender dropped
-                        Err(_) => RespValue::Null,            // Timeout expired
+                        Ok(Ok(val)) => success_response(val), // Success
+                        Ok(Err(_)) => RespValue::Array(None), // Sender dropped
+                        Err(_) => RespValue::Array(None),     // Timeout expired
                     }
                 }
             }
@@ -132,7 +128,7 @@ impl Command {
                         RespValue::BulkString(items[0].clone())
                     } else {
                         let resp_items = items.into_iter().map(RespValue::BulkString).collect();
-                        RespValue::Array(resp_items)
+                        RespValue::Array(Some(resp_items))
                     }
                 }
                 Ok(None) => RespValue::Null,
@@ -215,8 +211,6 @@ fn parse_push_command(args: &[RespValue], cmd_name: &str) -> Result<(String, Vec
     }
 
     let key = get_bulk_string_value(&args[1])?;
-
-    // Use iterator to collect all values from index 2 onwards
     let values: Result<Vec<String>, String> = args[2..].iter().map(get_bulk_string_value).collect();
 
     Ok((key, values?))
@@ -312,7 +306,7 @@ mod tests {
             .into_iter()
             .map(|s| RespValue::BulkString(s.to_string()))
             .collect();
-        RespValue::Array(items)
+        RespValue::Array(Some(items))
     }
 
     #[test]

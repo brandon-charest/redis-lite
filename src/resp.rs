@@ -2,11 +2,11 @@ use std::io::{Cursor, Read};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RespValue {
-    SimpleString(String),  // +OK\r\n
-    SimpleError(String),   // -Error message\r\n
-    Integer(i64),          // :[<+|->]<value>\r\n
-    BulkString(String),    // $<length>\r\n<data>\r\n
-    Array(Vec<RespValue>), // *<number-of-elements>\r\n<element-1>...<element-n>
+    SimpleString(String),          // +OK\r\n
+    SimpleError(String),           // -Error message\r\n
+    Integer(i64),                  // :[<+|->]<value>\r\n
+    BulkString(String),            // $<length>\r\n<data>\r\n
+    Array(Option<Vec<RespValue>>), // *<number-of-elements>\r\n<element-1>...<element-n>
     Null,
 }
 
@@ -20,7 +20,7 @@ impl RespValue {
             RespValue::Integer(i) => format!(":{}\r\n", i).into_bytes(),
             RespValue::BulkString(s) => format!("${}\r\n{}\r\n", s.len(), s).into_bytes(),
             RespValue::Null => b"$-1\r\n".to_vec(),
-            RespValue::Array(arr) => {
+            RespValue::Array(Some(arr)) => {
                 let mut buf = Vec::new();
                 buf.extend_from_slice(format!("*{}\r\n", arr.len()).as_bytes());
                 for item in arr {
@@ -28,6 +28,7 @@ impl RespValue {
                 }
                 buf
             }
+            RespValue::Array(None) => b"*-1\r\n".to_vec(),
         }
     }
 }
@@ -133,7 +134,7 @@ fn parse_array(cursor: &mut Cursor<&[u8]>) -> Result<RespValue, String> {
         items.push(item);
     }
 
-    Ok(RespValue::Array(items))
+    Ok(RespValue::Array(Some(items)))
 }
 
 #[cfg(test)]
@@ -149,10 +150,10 @@ mod test {
         let mut cursor = Cursor::new(&input[..]);
 
         let result = parse_resp(&mut cursor).unwrap();
-        let expected = RespValue::Array(vec![
+        let expected = RespValue::Array(Some(vec![
             RespValue::BulkString("ECHO".to_string()),
             RespValue::BulkString("hey".to_string()),
-        ]);
+        ]));
 
         assert_eq!(result, expected);
     }
@@ -195,10 +196,10 @@ mod test {
         let mut cursor = Cursor::new(&input[..]);
         let result = parse_resp(&mut cursor).unwrap();
 
-        let expected = RespValue::Array(vec![
+        let expected = RespValue::Array(Some(vec![
             RespValue::Integer(1),
             RespValue::SimpleString("OK".to_string()),
-        ]);
+        ]));
         assert_eq!(result, expected);
     }
 }

@@ -125,7 +125,6 @@ impl Db {
             return Err(());
         }
 
-        // 2. Clean up if empty
         if is_empty {
             state.kv.remove(&key);
         }
