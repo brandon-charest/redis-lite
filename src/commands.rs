@@ -1,4 +1,5 @@
 use std::time::{Duration, Instant};
+use tokio::time::timeout;
 
 use crate::{
     db::{DataType, Db},
@@ -15,6 +16,7 @@ pub enum Command {
     LPush(String, Vec<String>),
     LRange(String, i64, i64),
     LLen(String),
+    BLPOP(String, f64),
     LPop(String, Option<usize>),
 }
 
@@ -45,12 +47,13 @@ impl Command {
             "LPUSH" => parse_lpush(&args),
             "LRANGE" => parse_range(&args),
             "LLEN" => parse_llen(&args),
+            "BLPOP" => parse_blpop(&args),
             "LPOP" => parse_lpop(&args),
             _ => Err(format!("Unknown command: {}", command_name)),
         }
     }
 
-    pub fn execute(self, db: &Db) -> RespValue {
+    pub async fn execute(self, db: &Db) -> RespValue {
         match self {
             Command::Ping => RespValue::SimpleString("PONG".to_string()),
             Command::Echo(msg) => RespValue::BulkString(msg.clone()),
@@ -85,6 +88,44 @@ impl Command {
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
             },
+            Command::BLPOP(key, timeout_secs) => {
+                // Try to register or get data
+                let rx = match db.blpop_register(key.clone()) {
+                    Ok(Some(val)) => {
+                        // Immediate success! Return [key, value]
+                        return RespValue::Array(vec![
+                            RespValue::BulkString(key),
+                            RespValue::BulkString(val),
+                        ]);
+                    }
+                    Ok(None) => return RespValue::Null, // Should be unreachable
+                    Err(rx) => rx,                      // We are waiting on this receiver
+                };
+
+                // Helper to format success response
+                let success_response = |val: String| {
+                    RespValue::Array(vec![
+                        RespValue::BulkString(key.clone()),
+                        RespValue::BulkString(val),
+                    ])
+                };
+
+                if timeout_secs == 0.0 {
+                    // Infinite Timeout: Wait forever until we get a message
+                    match rx.await {
+                        Ok(val) => success_response(val),
+                        Err(_) => RespValue::Null, // Sender dropped (connection closed)
+                    }
+                } else {
+                    // Finite Timeout: Wait for Duration
+                    let duration = Duration::from_secs_f64(timeout_secs);
+                    match timeout(duration, rx).await {
+                        Ok(Ok(val)) => success_response(val), // Success within time
+                        Ok(Err(_)) => RespValue::Null,        // Sender dropped
+                        Err(_) => RespValue::Null,            // Timeout expired
+                    }
+                }
+            }
             Command::LPop(key, count) => match db.lpop(&key, count) {
                 Ok(Some(items)) => {
                     if count.is_none() {
@@ -103,11 +144,10 @@ impl Command {
     }
 }
 
-fn handle_push(len: usize) -> RespValue {
-    if len == 0 {
-        RespValue::SimpleError(WRONG_TYPE_ERR.to_string())
-    } else {
-        RespValue::Integer(len as i64)
+fn handle_push(result: Result<usize, ()>) -> RespValue {
+    match result {
+        Ok(len) => RespValue::Integer(len as i64),
+        Err(_) => RespValue::SimpleError(WRONG_TYPE_ERR.to_string()),
     }
 }
 
@@ -214,6 +254,25 @@ fn parse_llen(args: &[RespValue]) -> Result<Command, String> {
     Ok(Command::LLen(key))
 }
 
+fn parse_blpop(args: &[RespValue]) -> Result<Command, String> {
+    if args.len() != 3 {
+        return Err("ERR wrong number of arguments for 'blpop' command".to_string());
+    }
+
+    let key = get_bulk_string_value(&args[1])?;
+    let timeout_str = get_bulk_string_value(&args[2])?;
+
+    let timeout_val = timeout_str
+        .parse::<f64>()
+        .map_err(|_| "ERR timeout is not a float or integer".to_string())?;
+
+    if timeout_val < 0.0 {
+        return Err("ERR timeout is negative".to_string());
+    }
+
+    Ok(Command::BLPOP(key, timeout_val))
+}
+
 fn parse_lpop(args: &[RespValue]) -> Result<Command, String> {
     let num_args = args.len();
 
@@ -295,26 +354,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_execute_set_get() {
+    #[tokio::test]
+    async fn test_execute_set_get() {
         let db = Db::new();
         let set_cmd = Command::Set("key".to_string(), "val".to_string(), None);
-        let resp = set_cmd.execute(&db);
+        let resp = set_cmd.execute(&db).await;
         assert_eq!(resp, RespValue::SimpleString("OK".to_string()));
 
         let get_cmd = Command::Get("key".to_string());
-        let resp = get_cmd.execute(&db);
+        let resp = get_cmd.execute(&db).await;
         assert_eq!(resp, RespValue::BulkString("val".to_string()));
     }
 
-    #[test]
-    fn test_execute_rpush_wrong_type() {
+    #[tokio::test]
+    async fn test_execute_rpush_wrong_type() {
         let db = Db::new();
         let set_cmd = Command::Set("mykey".to_string(), "hello".to_string(), None);
-        set_cmd.execute(&db);
+        set_cmd.execute(&db).await;
 
         let rpush_cmd = Command::RPush("mykey".to_string(), vec!["hello".to_string()]);
-        let resp = rpush_cmd.execute(&db);
+        let resp = rpush_cmd.execute(&db).await;
 
         match resp {
             RespValue::SimpleError(msg) => assert!(msg.contains("WRONGTYPE")),

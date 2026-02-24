@@ -53,7 +53,7 @@ async fn process_socket(mut socket: TcpStream, db: Db) {
                     let command_result = Command::from_resp(value);
 
                     let response = match command_result {
-                        Ok(cmd) => cmd.execute(&db),
+                        Ok(cmd) => cmd.execute(&db).await,
                         Err(err) => RespValue::SimpleError(err),
                     };
 

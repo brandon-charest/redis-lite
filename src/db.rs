@@ -26,7 +26,10 @@ pub struct Db {
 impl Db {
     pub fn new() -> Db {
         Db {
-            state: Arc::new(Mutex::new(DbState { kv: HashMap::new() })),
+            state: Arc::new(Mutex::new(DbState {
+                kv: HashMap::new(),
+                waiting: HashMap::new(),
+            })),
         }
     }
 
@@ -49,13 +52,13 @@ impl Db {
         lock.kv.insert(key, (data, expiry));
     }
 
-    pub fn rpush(&self, key: String, values: Vec<String>) -> usize {
+    pub fn rpush(&self, key: String, values: Vec<String>) -> Result<usize, ()> {
         self.modify_list(key, |list| {
             list.extend(values);
         })
     }
 
-    pub fn lpush(&self, key: String, values: Vec<String>) -> usize {
+    pub fn lpush(&self, key: String, values: Vec<String>) -> Result<usize, ()> {
         self.modify_list(key, |list| {
             for value in values {
                 list.push_front(value);
@@ -63,24 +66,71 @@ impl Db {
         })
     }
 
-    fn modify_list<F>(&self, key: String, op: F) -> usize
+    pub fn blpop_register(&self, key: String) -> Result<Option<String>, oneshot::Receiver<String>> {
+        let mut lock = self.state.lock().unwrap();
+        if let Some((DataType::List(list), _)) = lock.kv.get_mut(&key) {
+            if let Some(val) = list.pop_front() {
+                if list.is_empty() {
+                    lock.kv.remove(&key);
+                }
+                return Ok(Some(val));
+            }
+        }
+
+        let (tx, rx) = oneshot::channel();
+        lock.waiting
+            .entry(key)
+            .or_insert_with(VecDeque::new)
+            .push_back(tx);
+
+        Err(rx)
+    }
+
+    fn modify_list<F>(&self, key: String, op: F) -> Result<usize, ()>
     where
         F: FnOnce(&mut VecDeque<String>),
     {
         let mut lock = self.state.lock().unwrap();
+        let state = &mut *lock;
 
-        let entry = lock
-            .kv
-            .entry(key)
-            .or_insert((DataType::List(VecDeque::new()), None));
+        let mut is_empty = false;
+        let mut pushed_len = 0;
+        let mut is_wrong_type = false;
+        {
+            let entry = state
+                .kv
+                .entry(key.clone())
+                .or_insert((DataType::List(VecDeque::new()), None));
 
-        match &mut entry.0 {
-            DataType::List(list) => {
+            if let DataType::List(list) = &mut entry.0 {
                 op(list);
-                list.len()
+                pushed_len = list.len();
+
+                if let Some(waiters) = state.waiting.get_mut(&key) {
+                    while !list.is_empty() && !waiters.is_empty() {
+                        if let Some(sender) = waiters.pop_front() {
+                            if let Some(val) = list.pop_front() {
+                                let _ = sender.send(val);
+                            }
+                        }
+                    }
+                }
+                is_empty = list.is_empty();
+            } else {
+                is_wrong_type = true;
             }
-            _ => 0,
         }
+
+        if is_wrong_type {
+            return Err(());
+        }
+
+        // 2. Clean up if empty
+        if is_empty {
+            state.kv.remove(&key);
+        }
+
+        Ok(pushed_len)
     }
 
     pub fn lrange(&self, key: String, start: i64, end: i64) -> Result<Vec<String>, ()> {
@@ -203,10 +253,10 @@ mod tests {
         let db = Db::new();
 
         let len1 = db.rpush("mylist".to_string(), vec!["a".to_string()]);
-        assert_eq!(len1, 1);
+        assert_eq!(len1, Ok(1));
 
         let len2 = db.rpush("mylist".to_string(), vec!["b".to_string(), "c".to_string()]);
-        assert_eq!(len2, 3);
+        assert_eq!(len2, Ok(3));
 
         match db.get("mylist") {
             Some(DataType::List(vec)) => {
