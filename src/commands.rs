@@ -18,6 +18,7 @@ pub enum Command {
     LLen(String),
     BLPOP(String, f64),
     LPop(String, Option<usize>),
+    Type(String),
 }
 
 const WRONG_TYPE_ERR: &str = "WRONGTYPE Operation against a key holding the wrong kind of value";
@@ -50,6 +51,7 @@ impl Command {
             "LLEN" => parse_llen(&args),
             "BLPOP" => parse_blpop(&args),
             "LPOP" => parse_lpop(&args),
+            "TYPE" => parse_type(&args),
             _ => Err(format!("Unknown command: {}", command_name)),
         }
     }
@@ -136,6 +138,10 @@ impl Command {
                     "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
                 ),
             },
+            Command::Type(key) => {
+                let type_name = db.get_type(&key);
+                RespValue::SimpleString(type_name)
+            }
         }
     }
 }
@@ -287,6 +293,14 @@ fn parse_lpop(args: &[RespValue]) -> Result<Command, String> {
     Ok(Command::LPop(key, count))
 }
 
+fn parse_type(args: &[RespValue]) -> Result<Command, String> {
+    if args.len() != 2 {
+        return Err("ERR wrong number of arguments for 'type' command".to_string());
+    }
+
+    let key = get_bulk_string_value(&args[1])?;
+    Ok(Command::Type(key))
+}
 fn parse_int(arg: &RespValue) -> Result<i64, String> {
     match arg {
         RespValue::BulkString(s) => s

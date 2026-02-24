@@ -213,6 +213,25 @@ impl Db {
             None => Ok(None),
         }
     }
+
+    pub fn get_type(&self, key: &str) -> String {
+        let mut lock = self.state.lock().unwrap();
+
+        if let Some((_, Some(expiry))) = lock.kv.get(key) {
+            if std::time::Instant::now() > *expiry {
+                lock.kv.remove(key);
+                return "none".to_string();
+            }
+        }
+
+        match lock.kv.get(key) {
+            Some((DataType::String(_), _)) => "string".to_string(),
+            Some((DataType::List(_), _)) => "list".to_string(),
+            Some((DataType::Set(_), _)) => "set".to_string(),
+            Some((DataType::Hash(_), _)) => "hash".to_string(),
+            None => "none".to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
